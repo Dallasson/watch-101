@@ -160,7 +160,22 @@ fun logNetworkType(context: Context) {
     if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
         val telephonyManager =
             context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-        val networkType = telephonyManager.networkType
+
+        val networkType = try {
+            // Check permission before reading network type
+            if (ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_PHONE_STATE
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
+                telephonyManager.networkType
+            } else {
+                TelephonyManager.NETWORK_TYPE_UNKNOWN
+            }
+        } catch (e: SecurityException) {
+            e.printStackTrace()
+            TelephonyManager.NETWORK_TYPE_UNKNOWN
+        }
 
         val networkTypeName = when (networkType) {
             TelephonyManager.NETWORK_TYPE_NR -> "5G"
@@ -183,6 +198,7 @@ fun logNetworkType(context: Context) {
         println("📶 Network Type: Unknown/No network")
     }
 }
+
 
 @androidx.compose.ui.tooling.preview.Preview(device = WearDevices.SMALL_ROUND, showSystemUi = true)
 @Composable
