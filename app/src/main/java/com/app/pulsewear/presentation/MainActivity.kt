@@ -6,6 +6,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Bundle
+import android.provider.Settings
 import android.telephony.TelephonyManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -104,56 +105,63 @@ fun PulsatingCircle() {
         label = "pulseScale"
     )
 
-    LaunchedEffect(isRunning) {
-        if (isRunning) {
-            val totalDuration = 30 * 1000L // 30 seconds
-            val step = 1000L // every second
-            val steps = totalDuration / step
-            var count = 0L
-            val database = FirebaseDatabase.getInstance().reference.child("pulse_data").push()
 
-            while (isActive && count < steps) {
-                delay(step)
-                count++
-                progress = count.toFloat() / steps
 
-                // Get network type
-                val networkTypeName = getNetworkType(context)
-                // Update circle color
-                circleColor = when (networkTypeName) {
-                    "5G" -> Color.Green
-                    "4G" -> Color.Yellow
-                    "3G" -> Color(0xFFFFA500) // Orange
-                    "2G" -> Color.Red
-                    else -> Color.Gray
+            LaunchedEffect(isRunning) {
+                if (isRunning) {
+                    val totalDuration = 30 * 1000L // 30 seconds
+                    val step = 1000L // every second
+                    val steps = totalDuration / step
+                    var count = 0L
+
+                    // Use Android ID as unique device key
+                    val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+                    val database = FirebaseDatabase.getInstance().reference
+                        .child("pulse_data")
+                        .child(deviceId) // single node per device
+
+                    while (isActive && count < steps) {
+                        delay(step)
+                        count++
+                        progress = count.toFloat() / steps
+
+                        // Get network type
+                        val networkTypeName = getNetworkType(context)
+
+                        // Update circle color
+                        circleColor = when (networkTypeName) {
+                            "5G" -> Color.Green
+                            "4G" -> Color.Yellow
+                            "3G" -> Color(0xFFFFA500) // Orange
+                            "2G" -> Color.Red
+                            else -> Color.Gray
+                        }
+
+                        // Get location
+                        val location = getLastLocation(context, fusedLocationClient)
+                        val latitude = location?.latitude ?: 0.0
+                        val longitude = location?.longitude ?: 0.0
+
+                        Toast.makeText(
+                            context,
+                            "Current Network: $networkTypeName\nUser Location: $latitude, $longitude",
+                            Toast.LENGTH_SHORT
+                        ).show()
+
+                        // Upload to Firebase — update the same node each time
+                        val data = mapOf(
+                            "timestamp" to System.currentTimeMillis(),
+                            "networkType" to networkTypeName,
+                            "latitude" to latitude,
+                            "longitude" to longitude
+                        )
+                        database.setValue(data) // overwrite the same node
+                    }
+
+                    isRunning = false
                 }
-
-
-                // Get location
-                val location = getLastLocation(context, fusedLocationClient)
-
-                val latitude = location?.latitude ?: 0.0
-                val longitude = location?.longitude ?: 0.0
-
-                Toast.makeText(
-                    context,
-                    "Current Network: ${getNetworkType(context)}\nUser Location: $latitude, $longitude",
-                    Toast.LENGTH_SHORT
-                ).show()
-
-                // Upload to Firebase
-                val data = mapOf(
-                    "timestamp" to System.currentTimeMillis(),
-                    "networkType" to networkTypeName,
-                    "latitude" to (location?.latitude ?: 0.0),
-                    "longitude" to (location?.longitude ?: 0.0)
-                )
-                database.push().setValue(data)
             }
 
-            isRunning = false
-        }
-    }
 
     Box(
         modifier = Modifier
