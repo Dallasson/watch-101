@@ -132,12 +132,14 @@ fun PulsatingCircle() {
                 // Get location
                 val location = getLastLocation(context, fusedLocationClient)
 
+                val latitude = location?.latitude ?: 0.0
+                val longitude = location?.longitude ?: 0.0
 
-                if (location != null) {
-                    Toast.makeText(context,"Current Network is : " + getNetworkType(context) + "User Location is : " +
-                            location.latitude.toString() + "" + location.longitude.toString(),
-                        Toast.LENGTH_SHORT).show()
-                }
+                Toast.makeText(
+                    context,
+                    "Current Network: ${getNetworkType(context)}\nUser Location: $latitude, $longitude",
+                    Toast.LENGTH_SHORT
+                ).show()
 
                 // Upload to Firebase
                 val data = mapOf(
