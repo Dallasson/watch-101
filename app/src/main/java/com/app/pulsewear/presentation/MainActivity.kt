@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.location.Location
 import android.os.Bundle
 import android.telephony.TelephonyManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.annotation.RequiresPermission
@@ -127,8 +128,16 @@ fun PulsatingCircle() {
                     else -> Color.Gray
                 }
 
+
                 // Get location
                 val location = getLastLocation(context, fusedLocationClient)
+
+
+                if (location != null) {
+                    Toast.makeText(context,"Current Network is : " + getNetworkType(context) + "User Location is : " +
+                            location.latitude.toString() + "" + location.longitude.toString(),
+                        Toast.LENGTH_SHORT).show()
+                }
 
                 // Upload to Firebase
                 val data = mapOf(
