@@ -4,8 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
+import android.location.Location
 import android.os.Bundle
 import android.telephony.TelephonyManager
 import androidx.activity.ComponentActivity
@@ -33,8 +32,12 @@ import androidx.wear.compose.material.MaterialTheme
 import androidx.wear.compose.material.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.app.pulsewear.presentation.theme.PulseWearTheme
+import com.google.firebase.database.FirebaseDatabase
+import com.google.android.gms.location.FusedLocationProviderClient
+import com.google.android.gms.location.LocationServices
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 class MainActivity : ComponentActivity() {
 
@@ -46,17 +49,17 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setTheme(android.R.style.Theme_DeviceDefault)
 
-        // Ask for READ_PHONE_STATE permission if not granted
-        if (ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.READ_PHONE_STATE
-            ) != PackageManager.PERMISSION_GRANTED
-        ) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(Manifest.permission.READ_PHONE_STATE),
-                PERMISSION_REQUEST_CODE
-            )
+        // Ask for permissions if not granted
+        val permissions = arrayOf(
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+        val missingPermissions = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }.toTypedArray()
+
+        if (missingPermissions.isNotEmpty()) {
+            ActivityCompat.requestPermissions(this, missingPermissions, PERMISSION_REQUEST_CODE)
         }
 
         setContent {
@@ -85,6 +88,10 @@ fun PulsatingCircle() {
     var isRunning by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0f) }
     val context = LocalContext.current
+    val fusedLocationClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
+
+    // State for circle color based on network
+    var circleColor by remember { mutableStateOf(Color.Red) }
 
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -96,21 +103,43 @@ fun PulsatingCircle() {
         label = "pulseScale"
     )
 
-    // Run progress and network logging when active
     LaunchedEffect(isRunning) {
         if (isRunning) {
-            val totalDuration = 5 * 60 * 1000L // 5 minutes
-            val step = 100L // every 100ms
+            val totalDuration = 30 * 1000L // 30 seconds
+            val step = 1000L // every second
             val steps = totalDuration / step
             var count = 0L
+            val database = FirebaseDatabase.getInstance().reference.child("pulse_data").push()
 
             while (isActive && count < steps) {
                 delay(step)
                 count++
                 progress = count.toFloat() / steps
-                logNetworkType(context)
+
+                // Get network type
+                val networkTypeName = getNetworkType(context)
+                // Update circle color
+                circleColor = when (networkTypeName) {
+                    "5G" -> Color.Green
+                    "4G" -> Color.Yellow
+                    "3G" -> Color(0xFFFFA500) // Orange
+                    "2G" -> Color.Red
+                    else -> Color.Gray
+                }
+
+                // Get location
+                val location = getLastLocation(context, fusedLocationClient)
+
+                // Upload to Firebase
+                val data = mapOf(
+                    "timestamp" to System.currentTimeMillis(),
+                    "networkType" to networkTypeName,
+                    "latitude" to (location?.latitude ?: 0.0),
+                    "longitude" to (location?.longitude ?: 0.0)
+                )
+                database.push().setValue(data)
             }
-            // Stop automatically after completion
+
             isRunning = false
         }
     }
@@ -119,7 +148,7 @@ fun PulsatingCircle() {
         modifier = Modifier
             .size(100.dp)
             .scale(scale)
-            .background(Color.Red, shape = CircleShape)
+            .background(circleColor, shape = CircleShape)
             .clickable {
                 if (isRunning) {
                     isRunning = false
@@ -148,36 +177,23 @@ fun PulsatingCircle() {
     }
 }
 
-/** Logs detailed network type **/
-
-
 @SuppressLint("MissingPermission")
-fun logNetworkType(context: Context) {
-    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-    val network = cm.activeNetwork ?: return
-    val capabilities = cm.getNetworkCapabilities(network) ?: return
+fun getNetworkType(context: Context): String {
+    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+    val network = cm.activeNetwork ?: return "Unknown"
+    val capabilities = cm.getNetworkCapabilities(network) ?: return "Unknown"
 
-    if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
-        val telephonyManager =
-            context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-
+    if (capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) {
+        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         val networkType = try {
-            // Check permission before reading network type
-            if (ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.READ_PHONE_STATE
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
                 telephonyManager.networkType
-            } else {
-                TelephonyManager.NETWORK_TYPE_UNKNOWN
-            }
+            } else TelephonyManager.NETWORK_TYPE_UNKNOWN
         } catch (e: SecurityException) {
-            e.printStackTrace()
             TelephonyManager.NETWORK_TYPE_UNKNOWN
         }
 
-        val networkTypeName = when (networkType) {
+        return when (networkType) {
             TelephonyManager.NETWORK_TYPE_NR -> "5G"
             TelephonyManager.NETWORK_TYPE_LTE -> "4G"
             TelephonyManager.NETWORK_TYPE_HSPAP,
@@ -186,19 +202,28 @@ fun logNetworkType(context: Context) {
             TelephonyManager.NETWORK_TYPE_HSUPA -> "3G"
             TelephonyManager.NETWORK_TYPE_EDGE,
             TelephonyManager.NETWORK_TYPE_GPRS -> "2G"
-            else -> "Unknown Cellular"
+            else -> "Unknown"
         }
-
-        println("📶 Network Type: $networkTypeName")
-    } else if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-        println("📶 Network Type: WiFi (ignored)")
-    } else if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_BLUETOOTH)) {
-        println("📶 Network Type: Bluetooth (ignored)")
-    } else {
-        println("📶 Network Type: Unknown/No network")
+    } else if (capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) {
+        return "WiFi"
     }
+    return "Unknown"
 }
 
+@SuppressLint("MissingPermission")
+suspend fun getLastLocation(context: Context, fusedLocationClient: FusedLocationProviderClient): Location? {
+    return if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        fusedLocationClient.lastLocation.awaitOrNull()
+    } else null
+}
+
+/** Extension to convert Task to suspend function */
+suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitOrNull(): T? = suspendCancellableCoroutine { cont ->
+    addOnCompleteListener {
+        if (it.isSuccessful) cont.resume(it.result, null)
+        else cont.resume(null, null)
+    }
+}
 
 @androidx.compose.ui.tooling.preview.Preview(device = WearDevices.SMALL_ROUND, showSystemUi = true)
 @Composable
