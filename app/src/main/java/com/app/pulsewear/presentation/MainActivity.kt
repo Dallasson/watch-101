@@ -35,8 +35,7 @@ import androidx.wear.compose.material.Text
 import androidx.wear.tooling.preview.devices.WearDevices
 import com.app.pulsewear.presentation.theme.PulseWearTheme
 import com.google.firebase.database.FirebaseDatabase
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -51,7 +50,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         setTheme(android.R.style.Theme_DeviceDefault)
 
-        // Ask for permissions if not granted
         val permissions = arrayOf(
             Manifest.permission.READ_PHONE_STATE,
             Manifest.permission.ACCESS_FINE_LOCATION
@@ -90,9 +88,9 @@ fun PulsatingCircle() {
     var isRunning by remember { mutableStateOf(false) }
     var progress by remember { mutableStateOf(0f) }
     val context = LocalContext.current
-    val fusedLocationClient: FusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(context)
+    val fusedLocationClient: FusedLocationProviderClient =
+        LocationServices.getFusedLocationProviderClient(context)
 
-    // State for circle color based on network
     var circleColor by remember { mutableStateOf(Color.Red) }
 
     val scale by infiniteTransition.animateFloat(
@@ -105,63 +103,90 @@ fun PulsatingCircle() {
         label = "pulseScale"
     )
 
+    // ----------------------------------------------------------------
+    // FIX: Continuous GPS tracking
+    // ----------------------------------------------------------------
 
+    @SuppressLint("MissingPermission")
+    fun startLocationUpdates(onLocation: (Location) -> Unit) {
+        val request = LocationRequest.Builder(
+            Priority.PRIORITY_HIGH_ACCURACY,
+            3000
+        )
+            .setMinUpdateDistanceMeters(3f)
+            .build()
 
-            LaunchedEffect(isRunning) {
-                if (isRunning) {
-                    val totalDuration = 30 * 1000L // 30 seconds
-                    val step = 1000L // every second
-                    val steps = totalDuration / step
-                    var count = 0L
-
-                    // Use Android ID as unique device key
-                    val deviceId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-                    val database = FirebaseDatabase.getInstance().reference
-                        .child("pulse_data")
-                        .child(deviceId) // single node per device
-
-                    while (isActive && count < steps) {
-                        delay(step)
-                        count++
-                        progress = count.toFloat() / steps
-
-                        // Get network type
-                        val networkTypeName = getNetworkType(context)
-
-                        // Update circle color
-                        circleColor = when (networkTypeName) {
-                            "5G" -> Color.Green
-                            "4G" -> Color.Yellow
-                            "3G" -> Color(0xFFFFA500) // Orange
-                            "2G" -> Color.Red
-                            else -> Color.Gray
-                        }
-
-                        // Get location
-                        val location = getLastLocation(context, fusedLocationClient)
-                        val latitude = location?.latitude ?: 0.0
-                        val longitude = location?.longitude ?: 0.0
-
-                        Toast.makeText(
-                            context,
-                            "Current Network: $networkTypeName\nUser Location: $latitude, $longitude",
-                            Toast.LENGTH_SHORT
-                        ).show()
-
-                        // Upload to Firebase — update the same node each time
-                        val data = mapOf(
-                            "timestamp" to System.currentTimeMillis(),
-                            "networkType" to networkTypeName,
-                            "latitude" to latitude,
-                            "longitude" to longitude
-                        )
-                        database.setValue(data) // overwrite the same node
-                    }
-
-                    isRunning = false
+        fusedLocationClient.requestLocationUpdates(
+            request,
+            object : LocationCallback() {
+                override fun onLocationResult(result: LocationResult) {
+                    val location = result.lastLocation ?: return
+                    onLocation(location)
                 }
+            },
+            context.mainLooper
+        )
+    }
+
+    // ----------------------------------------------------------------
+
+    LaunchedEffect(isRunning) {
+        if (isRunning) {
+            val totalDuration = 30 * 1000L
+            val step = 1000L
+            val steps = totalDuration / step
+            var count = 0L
+
+            val deviceId = Settings.Secure.getString(
+                context.contentResolver,
+                Settings.Secure.ANDROID_ID
+            )
+            val database = FirebaseDatabase.getInstance().reference
+                .child("pulse_data")
+                .child(deviceId)
+
+            // Start live GPS updates
+            startLocationUpdates { location ->
+
+                val latitude = location.latitude
+                val longitude = location.longitude
+                val networkTypeName = getNetworkType(context)
+
+                circleColor = when (networkTypeName) {
+                    "5G" -> Color.Green
+                    "4G" -> Color.Yellow
+                    "3G" -> Color(0xFFFFA500)
+                    "2G" -> Color.Red
+                    else -> Color.Gray
+                }
+
+                val data = mapOf(
+                    "timestamp" to System.currentTimeMillis(),
+                    "networkType" to networkTypeName,
+                    "latitude" to latitude,
+                    "longitude" to longitude
+                )
+
+                database.setValue(data)
+
+                Toast.makeText(
+                    context,
+                    "Updated: $latitude, $longitude",
+                    Toast.LENGTH_SHORT
+                ).show()
             }
 
+            while (isActive && count < steps) {
+                delay(step)
+                count++
+                progress = count.toFloat() / steps
+            }
+
+            isRunning = false
+        }
+    }
+
+    // UI ----------------------------------------------------------------
 
     Box(
         modifier = Modifier
@@ -198,14 +223,20 @@ fun PulsatingCircle() {
 
 @SuppressLint("MissingPermission")
 fun getNetworkType(context: Context): String {
-    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+    val cm =
+        context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
     val network = cm.activeNetwork ?: return "Unknown"
     val capabilities = cm.getNetworkCapabilities(network) ?: return "Unknown"
 
     if (capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) {
-        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        val telephonyManager =
+            context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         val networkType = try {
-            if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED) {
+            if (ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.READ_PHONE_STATE
+                ) == PackageManager.PERMISSION_GRANTED
+            ) {
                 telephonyManager.networkType
             } else TelephonyManager.NETWORK_TYPE_UNKNOWN
         } catch (e: SecurityException) {
@@ -230,21 +261,31 @@ fun getNetworkType(context: Context): String {
 }
 
 @SuppressLint("MissingPermission")
-suspend fun getLastLocation(context: Context, fusedLocationClient: FusedLocationProviderClient): Location? {
-    return if (ActivityCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+suspend fun getLastLocation(
+    context: Context,
+    fusedLocationClient: FusedLocationProviderClient
+): Location? {
+    return if (ActivityCompat.checkSelfPermission(
+            context,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+    ) {
         fusedLocationClient.lastLocation.awaitOrNull()
     } else null
 }
 
-/** Extension to convert Task to suspend function */
-suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitOrNull(): T? = suspendCancellableCoroutine { cont ->
-    addOnCompleteListener {
-        if (it.isSuccessful) cont.resume(it.result, null)
-        else cont.resume(null, null)
+suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitOrNull(): T? =
+    suspendCancellableCoroutine { cont ->
+        addOnCompleteListener {
+            if (it.isSuccessful) cont.resume(it.result, null)
+            else cont.resume(null, null)
+        }
     }
-}
 
-@androidx.compose.ui.tooling.preview.Preview(device = WearDevices.SMALL_ROUND, showSystemUi = true)
+@androidx.compose.ui.tooling.preview.Preview(
+    device = WearDevices.SMALL_ROUND,
+    showSystemUi = true
+)
 @Composable
 fun PreviewPulse() {
     PulseWearApp()

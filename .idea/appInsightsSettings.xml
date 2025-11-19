@@ -8,10 +8,10 @@
             <InsightsFilterSettings>
               <option name="connection">
                 <ConnectionSetting>
-                  <option name="appId" value="PLACEHOLDER" />
-                  <option name="mobileSdkAppId" value="" />
-                  <option name="projectId" value="" />
-                  <option name="projectNumber" value="" />
+                  <option name="appId" value="com.app.pulsewear" />
+                  <option name="mobileSdkAppId" value="1:531971283420:android:5b2721c6430a6dcd791719" />
+                  <option name="projectId" value="pulsewear-23fc7" />
+                  <option name="projectNumber" value="531971283420" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />
