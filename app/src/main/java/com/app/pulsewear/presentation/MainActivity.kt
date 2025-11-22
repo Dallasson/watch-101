@@ -82,6 +82,7 @@ fun PulseWearApp() {
     }
 }
 
+@SuppressLint("HardwareIds")
 @Composable
 fun PulsatingCircle() {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
@@ -92,6 +93,9 @@ fun PulsatingCircle() {
         LocationServices.getFusedLocationProviderClient(context)
 
     var circleColor by remember { mutableStateOf(Color.Red) }
+
+    // NEW: to avoid saving the same network type multiple times
+    var lastNetworkType by remember { mutableStateOf("") }
 
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -104,7 +108,7 @@ fun PulsatingCircle() {
     )
 
     // ----------------------------------------------------------------
-    // FIX: Continuous GPS tracking
+    // GPS Tracking
     // ----------------------------------------------------------------
 
     @SuppressLint("MissingPermission")
@@ -152,6 +156,7 @@ fun PulsatingCircle() {
                 val longitude = location.longitude
                 val networkTypeName = getNetworkType(context)
 
+                // Update circle color
                 circleColor = when (networkTypeName) {
                     "5G" -> Color.Green
                     "4G" -> Color.Yellow
@@ -160,14 +165,22 @@ fun PulsatingCircle() {
                     else -> Color.Gray
                 }
 
+                // Only save network type if changed
+                val networkToSave =
+                    if (networkTypeName != lastNetworkType) {
+                        lastNetworkType = networkTypeName
+                        networkTypeName
+                    } else lastNetworkType
+
                 val data = mapOf(
                     "timestamp" to System.currentTimeMillis(),
-                    "networkType" to networkTypeName,
+                    "networkType" to networkToSave,
                     "latitude" to latitude,
                     "longitude" to longitude
                 )
 
-                database.setValue(data)
+                // NEW: push a new node for every location
+                database.push().setValue(data)
 
                 Toast.makeText(
                     context,
@@ -260,19 +273,7 @@ fun getNetworkType(context: Context): String {
     return "Unknown"
 }
 
-@SuppressLint("MissingPermission")
-suspend fun getLastLocation(
-    context: Context,
-    fusedLocationClient: FusedLocationProviderClient
-): Location? {
-    return if (ActivityCompat.checkSelfPermission(
-            context,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED
-    ) {
-        fusedLocationClient.lastLocation.awaitOrNull()
-    } else null
-}
+
 
 suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitOrNull(): T? =
     suspendCancellableCoroutine { cont ->
