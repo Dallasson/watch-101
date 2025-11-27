@@ -242,8 +242,7 @@ fun getNetworkType(context: Context): String {
     val capabilities = cm.getNetworkCapabilities(network) ?: return "Unknown"
 
     if (capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) {
-        val telephonyManager =
-            context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         val networkType = try {
             if (ContextCompat.checkSelfPermission(
                     context,
