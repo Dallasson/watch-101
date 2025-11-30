@@ -1,7 +1,6 @@
 package com.app.pulsewear.presentation
 
 import android.Manifest
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
@@ -20,34 +19,48 @@ import com.app.pulsewear.presentation.theme.PulseWearTheme
 
 class MainActivity : ComponentActivity() {
 
+    // Permissions required by the app
+    private val neededPermissions = arrayOf(
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION,
+        Manifest.permission.READ_PHONE_STATE
+    )
+
+    // Launcher to request permissions
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
             val granted = perms.values.all { it }
             if (!granted) {
-                Toast.makeText(this, "Please grant all permissions", Toast.LENGTH_SHORT).show()
+                Toast.makeText(
+                    this,
+                    "Permissions are required to run the app",
+                    Toast.LENGTH_LONG
+                ).show()
+                finish() // close app if not granted
+            } else {
+                // Permissions granted, show app UI
+                setContent { PulseWearApp() }
             }
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        askPermissions()
-
-        setContent {
-            PulseWearApp()
-        }
+        checkAndRequestPermissions()
     }
 
-    private fun askPermissions() {
-        val needed = arrayOf(
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        )
-
-        val notGranted = needed.any {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+    // Check if all permissions are granted, else request them
+    private fun checkAndRequestPermissions() {
+        val allGranted = neededPermissions.all {
+            ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED
         }
 
-        if (notGranted) permissionLauncher.launch(needed)
+        if (allGranted) {
+            // Permissions already granted
+            setContent { PulseWearApp() }
+        } else {
+            // Ask for permissions
+            permissionLauncher.launch(neededPermissions)
+        }
     }
 }
 
