@@ -42,6 +42,7 @@ android {
 
 dependencies {
 
+    implementation(libs.material)
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.play.services.wearable)
     implementation(platform(libs.compose.bom))

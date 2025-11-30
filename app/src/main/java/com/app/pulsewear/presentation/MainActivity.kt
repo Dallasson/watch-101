@@ -1,70 +1,53 @@
 package com.app.pulsewear.presentation
 
 import android.Manifest
-import android.annotation.SuppressLint
-import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
-import android.location.Location
 import android.os.Bundle
-import android.provider.Settings
-import android.telephony.TelephonyManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.annotation.RequiresPermission
-import androidx.compose.animation.core.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.wear.compose.material.Button
-import androidx.wear.compose.material.MaterialTheme
-import androidx.wear.compose.material.Text
-import androidx.wear.tooling.preview.devices.WearDevices
 import com.app.pulsewear.presentation.theme.PulseWearTheme
-import com.google.firebase.database.FirebaseDatabase
-import com.google.android.gms.location.*
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.suspendCancellableCoroutine
 
 class MainActivity : ComponentActivity() {
 
-    companion object {
-        private const val PERMISSION_REQUEST_CODE = 100
-    }
+    private val permissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
+            val granted = perms.values.all { it }
+            if (!granted) {
+                Toast.makeText(this, "Please grant all permissions", Toast.LENGTH_SHORT).show()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setTheme(android.R.style.Theme_DeviceDefault)
-
-        val permissions = arrayOf(
-            Manifest.permission.READ_PHONE_STATE,
-            Manifest.permission.ACCESS_FINE_LOCATION
-        )
-        val missingPermissions = permissions.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }.toTypedArray()
-
-        if (missingPermissions.isNotEmpty()) {
-            ActivityCompat.requestPermissions(this, missingPermissions, PERMISSION_REQUEST_CODE)
-        }
+        askPermissions()
 
         setContent {
             PulseWearApp()
         }
+    }
+
+    private fun askPermissions() {
+        val needed = arrayOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        )
+
+        val notGranted = needed.any {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (notGranted) permissionLauncher.launch(needed)
     }
 }
 
@@ -74,219 +57,10 @@ fun PulseWearApp() {
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(MaterialTheme.colors.background),
+                .background(Color.Black),
             contentAlignment = Alignment.Center
         ) {
             PulsatingCircle()
         }
     }
-}
-
-@SuppressLint("HardwareIds")
-@Composable
-fun PulsatingCircle() {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    var isRunning by remember { mutableStateOf(false) }
-    var progress by remember { mutableStateOf(0f) }
-    val context = LocalContext.current
-    val fusedLocationClient: FusedLocationProviderClient =
-        LocationServices.getFusedLocationProviderClient(context)
-
-    var circleColor by remember { mutableStateOf(Color.Red) }
-
-    // NEW: to avoid saving the same network type multiple times
-    var lastNetworkType by remember { mutableStateOf("") }
-
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (isRunning) 1.3f else 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(600, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "pulseScale"
-    )
-
-    // ----------------------------------------------------------------
-    // GPS Tracking
-    // ----------------------------------------------------------------
-
-    @SuppressLint("MissingPermission")
-    fun startLocationUpdates(onLocation: (Location) -> Unit) {
-        val request = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            3000
-        )
-            .setMinUpdateDistanceMeters(3f)
-            .build()
-
-        fusedLocationClient.requestLocationUpdates(
-            request,
-            object : LocationCallback() {
-                override fun onLocationResult(result: LocationResult) {
-                    val location = result.lastLocation ?: return
-                    onLocation(location)
-                }
-            },
-            context.mainLooper
-        )
-    }
-
-    // ----------------------------------------------------------------
-
-    LaunchedEffect(isRunning) {
-        if (isRunning) {
-            val totalDuration = 30 * 1000L
-            val step = 1000L
-            val steps = totalDuration / step
-            var count = 0L
-
-            val deviceId = Settings.Secure.getString(
-                context.contentResolver,
-                Settings.Secure.ANDROID_ID
-            )
-            val database = FirebaseDatabase.getInstance().reference
-                .child("pulse_data")
-                .child(deviceId)
-
-            // Start live GPS updates
-            startLocationUpdates { location ->
-
-                val latitude = location.latitude
-                val longitude = location.longitude
-                val networkTypeName = getNetworkType(context)
-
-                // Update circle color
-                circleColor = when (networkTypeName) {
-                    "5G" -> Color.Green
-                    "4G" -> Color.Yellow
-                    "3G" -> Color(0xFFFFA500)
-                    "2G" -> Color.Red
-                    else -> Color.Gray
-                }
-
-                // Only save network type if changed
-                val networkToSave =
-                    if (networkTypeName != lastNetworkType) {
-                        lastNetworkType = networkTypeName
-                        networkTypeName
-                    } else lastNetworkType
-
-                val data = mapOf(
-                    "timestamp" to System.currentTimeMillis(),
-                    "networkType" to networkToSave,
-                    "latitude" to latitude,
-                    "longitude" to longitude
-                )
-
-                // NEW: push a new node for every location
-                database.push().setValue(data)
-
-                Toast.makeText(
-                    context,
-                    "Updated: $latitude, $longitude",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-
-            while (isActive && count < steps) {
-                delay(step)
-                count++
-                progress = count.toFloat() / steps
-            }
-
-            isRunning = false
-        }
-    }
-
-    // UI ----------------------------------------------------------------
-
-    Box(
-        modifier = Modifier
-            .size(100.dp)
-            .scale(scale)
-            .background(circleColor, shape = CircleShape)
-            .clickable {
-                if (isRunning) {
-                    isRunning = false
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        if (!isRunning) {
-            Button(
-                onClick = { isRunning = true },
-                modifier = Modifier.size(60.dp),
-                shape = CircleShape
-            ) {
-                Text("Start", fontSize = 12.sp)
-            }
-        } else {
-            Text(
-                text = "${(progress * 100).toInt()}%",
-                color = Color.White,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                fontSize = 18.sp,
-                modifier = Modifier.clickable { isRunning = false }
-            )
-        }
-    }
-}
-
-@SuppressLint("MissingPermission")
-fun getNetworkType(context: Context): String {
-    val cm =
-        context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
-    val network = cm.activeNetwork ?: return "Unknown"
-    val capabilities = cm.getNetworkCapabilities(network) ?: return "Unknown"
-
-    if (capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) {
-        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-        val networkType = try {
-            if (ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.READ_PHONE_STATE
-                ) == PackageManager.PERMISSION_GRANTED
-            ) {
-                telephonyManager.networkType
-            } else TelephonyManager.NETWORK_TYPE_UNKNOWN
-        } catch (e: SecurityException) {
-            TelephonyManager.NETWORK_TYPE_UNKNOWN
-        }
-
-        return when (networkType) {
-            TelephonyManager.NETWORK_TYPE_NR -> "5G"
-            TelephonyManager.NETWORK_TYPE_LTE -> "4G"
-            TelephonyManager.NETWORK_TYPE_HSPAP,
-            TelephonyManager.NETWORK_TYPE_HSPA,
-            TelephonyManager.NETWORK_TYPE_HSDPA,
-            TelephonyManager.NETWORK_TYPE_HSUPA -> "3G"
-            TelephonyManager.NETWORK_TYPE_EDGE,
-            TelephonyManager.NETWORK_TYPE_GPRS -> "2G"
-            else -> "Unknown"
-        }
-    } else if (capabilities.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI)) {
-        return "WiFi"
-    }
-    return "Unknown"
-}
-
-
-
-suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitOrNull(): T? =
-    suspendCancellableCoroutine { cont ->
-        addOnCompleteListener {
-            if (it.isSuccessful) cont.resume(it.result, null)
-            else cont.resume(null, null)
-        }
-    }
-
-@androidx.compose.ui.tooling.preview.Preview(
-    device = WearDevices.SMALL_ROUND,
-    showSystemUi = true
-)
-@Composable
-fun PreviewPulse() {
-    PulseWearApp()
 }
