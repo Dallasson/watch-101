@@ -7,12 +7,16 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
+import android.telephony.TelephonyManager
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.*
@@ -47,6 +51,7 @@ class LocationService : Service() {
                 val loc = getLocationOnce()
 
                 if (loc != null) {
+
                     val deviceId = Settings.Secure.getString(
                         contentResolver, Settings.Secure.ANDROID_ID
                     )
@@ -58,7 +63,8 @@ class LocationService : Service() {
                     val map = mapOf(
                         "timestamp" to System.currentTimeMillis(),
                         "latitude" to loc.latitude,
-                        "longitude" to loc.longitude
+                        "longitude" to loc.longitude,
+                        "networkType" to getNetworkType()   // ⬅️ added here
                     )
 
                     ref.push().setValue(map)
@@ -78,6 +84,9 @@ class LocationService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    // --------------------------
+    // Get Location Once
+    // --------------------------
     @SuppressLint("MissingPermission")
     private suspend fun getLocationOnce(): Location? =
         suspendCoroutine { cont ->
@@ -112,6 +121,52 @@ class LocationService : Service() {
             }
         }
 
+    // --------------------------
+    // Get Network Type (Safe)
+    // --------------------------
+    @SuppressLint("MissingPermission")
+    private fun getNetworkType(): String {
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork ?: return "none"
+        val caps = cm.getNetworkCapabilities(network) ?: return "none"
+
+        // WiFi
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+            return "wifi"
+        }
+
+        // Cellular
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+
+            val tm = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+            val type = tm.dataNetworkType
+
+            return when (type) {
+                TelephonyManager.NETWORK_TYPE_NR -> "5g"   // 5G
+
+                TelephonyManager.NETWORK_TYPE_LTE -> "lte" // 4G LTE
+
+                TelephonyManager.NETWORK_TYPE_HSPAP,
+                TelephonyManager.NETWORK_TYPE_HSDPA,
+                TelephonyManager.NETWORK_TYPE_HSUPA,
+                TelephonyManager.NETWORK_TYPE_HSPA,
+                TelephonyManager.NETWORK_TYPE_UMTS -> "3g"
+
+                TelephonyManager.NETWORK_TYPE_EDGE,
+                TelephonyManager.NETWORK_TYPE_GPRS -> "2g"
+
+                else -> "4g"  // fallback
+            }
+        }
+
+        return "none"
+    }
+
+
+
+    // --------------------------
+    // Foreground Notification
+    // --------------------------
     private fun buildNotification(text: String): Notification {
         val pi = PendingIntent.getActivity(
             this, 0,
