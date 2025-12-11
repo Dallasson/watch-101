@@ -32,47 +32,48 @@ class LocationService : Service() {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private lateinit var fused: FusedLocationProviderClient
 
-    // 1. Define the Receiver to listen for the "UPLOAD_LOCATION_NOW" signal
+    // Variable to store the tracking period (e.g., "5 min") for the Firebase node
+    private var trackingPeriod: String = "Unknown_Session"
+
+    // Define the internal BroadcastReceiver to listen for the "UPLOAD_LOCATION_NOW" signal
     private val locationUpdateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.action == "UPLOAD_LOCATION_NOW") {
-                // Trigger the location update and upload when the broadcast is received
+                // Trigger the location update and upload on every broadcast from the UI
                 uploadLocationToFirebase()
             }
         }
     }
-
-    // LocationService.kt
 
     override fun onCreate() {
         super.onCreate()
         fused = LocationServices.getFusedLocationProviderClient(this)
         createNotificationChannel()
 
+        // Register the Receiver with the necessary security flag (API 33+ fix)
         val filter = IntentFilter("UPLOAD_LOCATION_NOW")
 
-        // --- FIX START ---
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // TIRAMISU is API 33
-            // For internal broadcasts, use RECEIVER_NOT_EXPORTED
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            // Use Context.RECEIVER_NOT_EXPORTED for internal-only broadcasts
             registerReceiver(locationUpdateReceiver, filter, RECEIVER_NOT_EXPORTED)
         } else {
             registerReceiver(locationUpdateReceiver, filter)
         }
-        // --- FIX END ---
     }
 
     @SuppressLint("ForegroundServiceType")
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
 
-        // Start foreground service with a generic notification
+        // Extract the tracking period from the intent passed by PulsatingCircle
+        trackingPeriod = intent?.getStringExtra("TRACKING_PERIOD") ?: "Unknown_Session"
+
+        // Start foreground service with the updated notification text
         startForeground(
             1,
-            buildNotification("Tracking Location...")
+            buildNotification("Tracking Location for: $trackingPeriod")
         )
 
-        // *** REMOVED: The problematic while(isActive) loop is gone. ***
-        // The service now just waits passively for the UI (PulsatingCircle)
-        // to send the "UPLOAD_LOCATION_NOW" broadcast every second.
+        // The service runs passively, waiting for the UI to send the broadcast every second.
 
         return START_STICKY
     }
@@ -80,7 +81,7 @@ class LocationService : Service() {
     override fun onDestroy() {
         scope.cancel()
 
-        // 3. Unregister the Receiver to prevent memory leaks
+        // Unregister the Receiver when the service is destroyed
         unregisterReceiver(locationUpdateReceiver)
 
         super.onDestroy()
@@ -90,8 +91,7 @@ class LocationService : Service() {
 
 
     // ---------------------------------------------------
-    // 4. Core Logic: Location Acquisition and Firebase Upload
-    // This is called by the BroadcastReceiver
+    // Core Logic: Location Acquisition and Firebase Upload
     // ---------------------------------------------------
     private fun uploadLocationToFirebase() = scope.launch {
 
@@ -103,9 +103,14 @@ class LocationService : Service() {
                 contentResolver, Settings.Secure.ANDROID_ID
             )
 
+            // Sanitize the period string for use as a Firebase key (e.g., "5 min" -> "5_min")
+            val periodNode = trackingPeriod.replace(" ", "_").replace(".", "")
+
+            // Construct the Firebase path: pulse_data/deviceId/Tracking_Period_Node/timestamped_data
             val ref = FirebaseDatabase.getInstance().reference
                 .child("pulse_data")
                 .child(deviceId)
+                .child(periodNode) // Use the user-selected period as a node
 
             val map = mapOf(
                 "timestamp" to System.currentTimeMillis(),
@@ -123,11 +128,10 @@ class LocationService : Service() {
 
 
     // ---------------------------------------------------
-    // Get Single Accurate Location (Unchanged)
+    // Get Single Accurate Location
     // ---------------------------------------------------
     @SuppressLint("MissingPermission")
     private suspend fun getLocationOnce(): Location? = suspendCoroutine { cont ->
-
         if (ActivityCompat.checkSelfPermission(
                 this,
                 Manifest.permission.ACCESS_FINE_LOCATION
@@ -137,12 +141,10 @@ class LocationService : Service() {
             return@suspendCoroutine
         }
 
-        // Try last known location first
         fused.lastLocation.addOnSuccessListener { last ->
             if (last != null) {
                 cont.resume(last)
             } else {
-
                 val request = LocationRequest.Builder(
                     Priority.PRIORITY_HIGH_ACCURACY, 0
                 )
@@ -165,26 +167,21 @@ class LocationService : Service() {
 
 
     // ---------------------------------------------------
-    // Safe Network Type Detection (Unchanged)
+    // Safe Network Type Detection
     // ---------------------------------------------------
     @SuppressLint("MissingPermission")
     private fun getNetworkType(): String {
-        // ... (Network logic remains the same)
+
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val network = cm.activeNetwork ?: return "none"
         val caps = cm.getNetworkCapabilities(network) ?: return "none"
 
-        // WiFi
         if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
             return "wifi"
         }
 
-        // Cellular
         if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
-
             val tm = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-
-            // Fix for Android 13+ (dataNetworkType fails sometimes)
             val type = if (Build.VERSION.SDK_INT >= 30) {
                 tm.dataNetworkType
             } else {
@@ -210,13 +207,13 @@ class LocationService : Service() {
 
 
     // ---------------------------------------------------
-    // Notification UI (Unchanged)
+    // Notification UI
     // ---------------------------------------------------
     private fun buildNotification(text: String): Notification {
 
         val pi = PendingIntent.getActivity(
             this, 0,
-            Intent(this, MainActivity::class.java), // Assuming MainActivity is your main entry point
+            Intent(this, MainActivity::class.java), // Assuming MainActivity is your main activity
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 

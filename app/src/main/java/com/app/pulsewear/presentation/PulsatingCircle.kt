@@ -24,8 +24,6 @@ import androidx.wear.compose.material.*
 import kotlinx.coroutines.delay
 import kotlin.math.max
 
-// NOTE: You will need a LocationService.kt file in this package as well.
-
 @Composable
 fun PulsatingCircle() {
     val isDark = isSystemInDarkTheme()
@@ -76,7 +74,7 @@ fun PulsatingCircle() {
         while (isRunning && elapsedSeconds < targetSeconds) {
             delay(1000L)
             elapsedSeconds += 1L
-            
+
             context.sendBroadcast(Intent("UPLOAD_LOCATION_NOW"))
         }
 
@@ -128,7 +126,10 @@ fun PulsatingCircle() {
                         onClick = {
                             // Manual start
                             isRunning = true
-                            val intent = Intent(context, LocationService::class.java)
+                            val intent = Intent(context, LocationService::class.java).apply {
+                                // Pass the selected interval to the Service
+                                putExtra("TRACKING_PERIOD", selectedInterval)
+                            }
                             // Start the Foreground Service
                             ContextCompat.startForegroundService(context, intent)
                             Toast.makeText(context, "Service Started", Toast.LENGTH_SHORT).show()
