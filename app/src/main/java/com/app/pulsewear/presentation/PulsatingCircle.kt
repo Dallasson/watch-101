@@ -24,6 +24,8 @@ import androidx.wear.compose.material.*
 import kotlinx.coroutines.delay
 import kotlin.math.max
 
+// NOTE: You will need a LocationService.kt file in this package as well.
+
 @Composable
 fun PulsatingCircle() {
     val isDark = isSystemInDarkTheme()
@@ -31,23 +33,22 @@ fun PulsatingCircle() {
 
     var selectedInterval by remember { mutableStateOf("30 sec") }
     var isRunning by remember { mutableStateOf(false) }
-    var circleColor by remember { mutableStateOf(Color.Red) }
     var showPicker by remember { mutableStateOf(false) }
 
-    // elapsed seconds counter (UI)
+    // Elapsed seconds counter (UI)
     var elapsedSeconds by remember { mutableStateOf(0L) }
 
     val context = LocalContext.current
 
-    fun intervalToMs(value: String): Long =
+    fun intervalToSeconds(value: String): Long =
         when (value) {
-            "30 sec" -> 30_000L
-            "5 min" -> 5 * 60_000L
-            "10 min" -> 10 * 60_000L
-            "15 min" -> 15 * 60_000L
-            "30 min" -> 30 * 60_000L
-            "60 min" -> 60 * 60_000L
-            else -> 30_000L
+            "30 sec" -> 30L
+            "5 min" -> 5 * 60L
+            "10 min" -> 10 * 60L
+            "15 min" -> 15 * 60L
+            "30 min" -> 30 * 60L
+            "60 min" -> 60 * 60L
+            else -> 30L
         }
 
     // Pulsating animation
@@ -61,26 +62,26 @@ fun PulsatingCircle() {
         )
     )
 
-    // Timer effect: counts seconds while isRunning and stops everything when reaches target
+    // Location Tracking and Timing Logic (Runs every second)
     LaunchedEffect(isRunning, selectedInterval) {
         if (!isRunning) {
             elapsedSeconds = 0L
             return@LaunchedEffect
         }
 
-        // compute target seconds (in case selectedInterval changes while running)
-        val targetMs = intervalToMs(selectedInterval)
-        val targetSeconds = max(1L, targetMs / 1000L) // avoid zero
+        val targetSeconds = max(1L, intervalToSeconds(selectedInterval))
 
         elapsedSeconds = 0L
-        // Count from 0 up to targetSeconds
+
         while (isRunning && elapsedSeconds < targetSeconds) {
             delay(1000L)
             elapsedSeconds += 1L
+            
+            context.sendBroadcast(Intent("UPLOAD_LOCATION_NOW"))
         }
 
         if (isRunning && elapsedSeconds >= targetSeconds) {
-            // reached target -> stop service and reset UI
+            // Stop service when the selected duration is finished
             context.stopService(Intent(context, LocationService::class.java))
             isRunning = false
             Toast.makeText(context, "Finished ($selectedInterval)", Toast.LENGTH_SHORT).show()
@@ -105,14 +106,14 @@ fun PulsatingCircle() {
                 onClick = { showPicker = true }
             )
 
-            // Pulsating interactive circle
+            // Circle UI (Start/Stop Button)
             Box(
                 modifier = Modifier
                     .size(110.dp)
                     .scale(scale)
-                    .background(circleColor, CircleShape)
+                    .background(Color.Red, CircleShape)
                     .clickable {
-                        // tapping while running stops everything early
+                        // Manual stop
                         if (isRunning) {
                             context.stopService(Intent(context, LocationService::class.java))
                             isRunning = false
@@ -123,12 +124,12 @@ fun PulsatingCircle() {
                 contentAlignment = Alignment.Center
             ) {
                 if (!isRunning) {
-                    // Start button when not running
                     Button(
                         onClick = {
+                            // Manual start
                             isRunning = true
                             val intent = Intent(context, LocationService::class.java)
-                            intent.putExtra("intervalMs", intervalToMs(selectedInterval))
+                            // Start the Foreground Service
                             ContextCompat.startForegroundService(context, intent)
                             Toast.makeText(context, "Service Started", Toast.LENGTH_SHORT).show()
                         },
@@ -138,7 +139,6 @@ fun PulsatingCircle() {
                         Text("Start", fontSize = 12.sp, textAlign = TextAlign.Center)
                     }
                 } else {
-                    // Show live timer: "12 sec" (Option 2)
                     Text(
                         text = "${elapsedSeconds} sec",
                         fontSize = 16.sp,
@@ -149,7 +149,7 @@ fun PulsatingCircle() {
             }
         }
 
-        // WearOS picker dialog
+        // Interval picker dialog
         if (showPicker) {
             IntervalPickerDialog(
                 selected = selectedInterval,
@@ -173,7 +173,6 @@ fun IntervalButton(selected: String, onClick: () -> Unit) {
     }
 }
 
-// --- WearOS Interval Picker Dialog (Dialog + ScalingLazyColumn) ---
 @Composable
 fun IntervalPickerDialog(
     selected: String,
@@ -186,7 +185,7 @@ fun IntervalPickerDialog(
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(Color.Black, shape = CircleShape)
+                .background(Color.Black, CircleShape)
                 .padding(12.dp)
         ) {
             ScalingLazyColumn(
